@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>نظام الدخول الذكي</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+
+<style>
+*{box-sizing:border-box}
+
+body{
+    margin:0;
+    font-family:Arial,Tahoma,sans-serif;
+    background:#0b0f14;
+    color:white;
+}
+
+.container{
+    max-width:650px;
+    margin:auto;
+    padding:20px;
+}
+
+h1{
+    text-align:center;
+    color:#00d9ff;
+    margin-bottom:8px;
+}
+
+.subtitle{
+    text-align:center;
+    color:#aaa;
+    margin-bottom:20px;
+}
+
+.card{
+    background:#151b23;
+    border:1px solid #293441;
+    border-radius:18px;
+    padding:18px;
+    margin-bottom:18px;
+}
+
+video{
+    width:100%;
+    border-radius:15px;
+    background:#000;
+    display:block;
+}
+
+button{
+    width:100%;
+    padding:15px;
+    margin-top:10px;
+    border:0;
+    border-radius:12px;
+    font-size:17px;
+    font-weight:bold;
+    cursor:pointer;
+    background:#087ea4;
+    color:white;
+}
+
+button:active{
+    transform:scale(.98);
+}
+
+.green{background:#16864b}
+.red{background:#b32632}
+.gray{background:#39424e}
+
+input{
+    width:100%;
+    margin-top:10px;
+    padding:13px;
+    background:#202833;
+    color:white;
+    border:1px solid #3b4654;
+    border-radius:10px;
+}
+
+.status{
+    margin-top:15px;
+    padding:15px;
+    border-radius:12px;
+    text-align:center;
+    background:#202833;
+    font-size:18px;
+}
+
+.people{
+    margin-top:15px;
+}
+
+.person{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    background:#202833;
+    padding:12px;
+    border-radius:10px;
+    margin-top:8px;
+}
+
+.small{
+    width:auto;
+    padding:8px 12px;
+    margin:0;
+    font-size:14px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>🛡️ نظام الدخول الذكي</h1>
+<div class="subtitle">
+التعرف على الأشخاص المسموح لهم بالدخول
+</div>
+
+<div class="card">
+
+<h2>📷 الكاميرا</h2>
+
+<video id="video" autoplay muted playsinline></video>
+
+<button onclick="startCamera()">تشغيل الكاميرا</button>
+
+<button class="green" onclick="registerPerson()">
+➕ تسجيل شخص مسموح
+</button>
+
+<input id="personName" type="text" placeholder="اكتب اسم الشخص">
+
+<button class="gray" onclick="startRecognition()">
+🔍 بدء فحص الدخول
+</button>
+
+<button class="red" onclick="stopCamera()">
+⛔ إيقاف الكاميرا
+</button>
+
+<div id="status" class="status">
+جاري تجهيز النظام...
+</div>
+
+</div>
+
+<div class="card">
+
+<h2>👥 الأشخاص المسموح لهم</h2>
+
+<div id="people" class="people"></div>
+
+<button class="red" onclick="clearPeople()">
+🗑️ حذف جميع الأشخاص
+</button>
+
+</div>
+
+</div>
+
+<script>
+
+const video = document.getElementById("video");
+const statusBox = document.getElementById("status");
+const peopleBox = document.getElementById("people");
+const nameInput = document.getElementById("personName");
+
+const MODEL_URL =
+"https://cdn.jsdelivr.net/gh/vladmandic/face-api/model";
+
+let stream = null;
+let recognizing = false;
+let modelsLoaded = false;
+
+let allowedPeople =
+JSON.parse(localStorage.getItem("allowedPeople") || "[]");
+
+
+function speak(text){
+
+    try{
+        speechSynthesis.cancel();
+
+        const msg = new SpeechSynthesisUtterance(text);
+        msg.lang = "ar-SA";
+        msg.rate = 0.9;
+        msg.pitch = 1;
+
+        speechSynthesis.speak(msg);
+    }catch(e){}
+}
+
+
+function showStatus(text){
+
+    statusBox.innerHTML = text;
+}
+
+
+function savePeople(){
+
+    localStorage.setItem(
+        "allowedPeople",
+        JSON.stringify(allowedPeople)
+    );
+
+    displayPeople();
+}
+
+
+function displayPeople(){
+
+    if(allowedPeople.length === 0){
+
+        peopleBox.innerHTML =
+        "<div style='color:#aaa;text-align:center'>لا يوجد أشخاص مسجلون</div>";
+
+        return;
+    }
+
+    peopleBox.innerHTML = "";
+
+    allowedPeople.forEach((person,index)=>{
+
+        const div = document.createElement("div");
+        div.className = "person";
+
+        div.innerHTML = `
+            <span>👤 ${person.name}</span>
+            <button class="red small" onclick="deletePerson(${index})">
+            حذف
+            </button>
+        `;
+
+        peopleBox.appendChild(div);
+    });
+}
+
+
+function deletePerson(index){
+
+    allowedPeople.splice(index,1);
+    savePeople();
+
+    showStatus("تم حذف الشخص");
+}
+
+
+function clearPeople(){
+
+    if(!confirm("هل تريد حذف جميع الأشخاص؟")) return;
+
+    allowedPeople = [];
+    savePeople();
+
+    showStatus("تم حذف جميع الأشخاص");
+}
+
+
+async function loadModels(){
+
+    if(modelsLoaded) return;
+
+    showStatus("⏳ جاري تحميل نظام التعرف...");
+
+    try{
+
+        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+
+        modelsLoaded = true;
+
+        showStatus("✅ النظام جاهز");
+
+    }catch(error){
+
+        console.error(error);
+
+        showStatus(
+            "❌ تعذر تحميل نظام التعرف. تأكد من اتصال الإنترنت."
+        );
+    }
+}
+
+
+async function startCamera(){
+
+    try{
+
+        await loadModels();
+
+        if(stream){
+            stopCamera();
+        }
+
+        stream = await navigator.mediaDevices.getUserMedia({
+            video:{
+                facingMode:"user",
+                width:{ideal:640},
+                height:{ideal:480}
+            },
+            audio:false
+        });
+
+        video.srcObject = stream;
+
+        showStatus("📷 الكاميرا تعمل الآن");
+
+    }catch(error){
+
+        console.error(error);
+
+        showStatus(
+            "❌ لم يتم تشغيل الكاميرا. اسمح للموقع باستخدام الكاميرا."
+        );
+    }
+}
+
+
+function stopCamera(){
+
+    recognizing = false;
+
+    if(stream){
+
+        stream.getTracks().forEach(track=>{
+            track.stop();
+        });
+
+        stream = null;
+        video.srcObject = null;
+    }
+
+    showStatus("⛔ تم إيقاف الكاميرا");
+}
+
+
+async function registerPerson(){
+
+    const name = nameInput.value.trim();
+
+    if(!name){
+
+        showStatus("⚠️ اكتب اسم الشخص أولاً");
+        return;
+    }
+
+    if(!stream){
+
+        showStatus("⚠️ شغّل الكاميرا أولاً");
+        return;
+    }
+
+    showStatus("👤 انظر إلى الكاميرا... جاري التسجيل");
+
+    try{
+
+        const descriptors = [];
+
+        for(let i=0;i<3;i++){
+
+            await new Promise(
+                resolve=>setTimeout(resolve,700)
+            );
+
+            const result =
+            await faceapi
+            .detectSingleFace(
+                video,
+                new faceapi.TinyFaceDetectorOptions({
+                    inputSize:320,
+                    scoreThreshold:0.5
+                })
+            )
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+
+            if(result){
+
+                descriptors.push(
+                    Array.from(result.descriptor)
+                );
+
+            }else{
+
+                showStatus(
+                    "❌ لم يتم العثور على وجه واضح"
+                );
+
+                return;
+            }
+        }
+
+        const average = new Array(128).fill(0);
+
+        descriptors.forEach(desc=>{
+
+            desc.forEach((value,i)=>{
+                average[i] += value;
+            });
+
+        });
+
+        for(let i=0;i<128;i++){
+            average[i] /= descriptors.length;
+        }
+
+        allowedPeople.push({
+            name:name,
+            descriptor:average
+        });
+
+        savePeople();
+
+        nameInput.value = "";
+
+        showStatus(
+            "✅ تم تسجيل " + name + " بنجاح"
+        );
+
+        speak(
+            "تم تسجيل " + name + " بنجاح"
+        );
+
+    }catch(error){
+
+        console.error(error);
+
+        showStatus(
+            "❌ حدث خطأ أثناء التسجيل"
+        );
+    }
+}
+
+
+async function startRecognition(){
+
+    if(!stream){
+
+        showStatus("⚠️ شغّل الكاميرا أولاً");
+        return;
+    }
+
+    if(allowedPeople.length === 0){
+
+        showStatus(
+            "⚠️ لا يوجد أشخاص مسموح لهم. سجل شخصاً أولاً."
+        );
+
+        return;
+    }
+
+    recognizing = true;
+
+    showStatus("🔍 جاري فحص الوجوه...");
+
+    recognitionLoop();
+}
+
+
+async function recognitionLoop(){
+
+    if(!recognizing || !stream) return;
+
+    try{
+
+        const result =
+        await faceapi
+        .detectSingleFace(
+            video,
+            new faceapi.TinyFaceDetectorOptions({
+                inputSize:320,
+                scoreThreshold:0.5
+            })
+        )
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+
+        if(result){
+
+            let bestPerson = null;
+            let bestDistance = Infinity;
+
+            for(const person of allowedPeople){
+
+                const distance =
+                faceapi.euclideanDistance(
+                    result.descriptor,
+                    person.descriptor
+                );
+
+                if(distance < bestDistance){
+
+                    bestDistance = distance;
+                    bestPerson = person;
+                }
+            }
+
+            if(bestPerson && bestDistance < 0.50){
+
+                showStatus(
+                    "🟢 تم السماح بالدخول<br>" +
+                    "مرحباً " + bestPerson.name
+                );
+
+                speak(
+                    "أهلاً بكم في نظام نزيه الزهيداني لتأمين شركتكم"
+                );
+
+            }else{
+
+                showStatus(
+                    "🔴 غير مسموح بالدخول"
+                );
+
+                speak("غير مسموح");
+            }
+
+        }else{
+
+            showStatus(
+                "👁️ لم يتم العثور على وجه"
+            );
+        }
+
+    }catch(error){
+
+        console.error(error);
+    }
+
+    setTimeout(recognitionLoop,1200);
+}
+
+
+displayPeople();
+
+loadModels();
+
+</script>
+
+</body>
+</html>
